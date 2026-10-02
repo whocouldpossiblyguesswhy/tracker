@@ -476,6 +476,15 @@ function renderHistory() {
 
 // ---------------------------------------------------------------- settings
 
+// Live readout for the Settings view; refreshed every tick while visible.
+function audioStatusText() {
+  const st = alerts.status();
+  const last = st.lastRing
+    ? `last chime ${new Date(st.lastRing.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })} via ${st.lastRing.path}`
+    : 'no chime played yet';
+  return `engine ${st.context} · session ${st.session} · mode ${st.mode} · fallback ${st.media} · ${last}`;
+}
+
 function renderSettings() {
   const s = state.settings;
   const lvl = E.levelInfo(s, state.level);
@@ -534,7 +543,7 @@ function renderSettings() {
       <div class="field"><label>Test chime</label><button class="btn small" data-act="test-sound">Play</button></div>
       <div class="field" ${'audioSession' in navigator ? '' : 'hidden'}><label>On iPhone <span class="hint">${{ always: 'Plays even on silent. Pauses music in other apps.', solo: 'Pauses music for the chime, then lets it resume.' }[s.audioMode] || 'Plays over music, asking it to duck.'}</span></label>
         <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' && s.audioMode !== 'solo' ? 'selected' : ''}>Mix with other audio</option><option value="solo" ${s.audioMode === 'solo' ? 'selected' : ''}>Pause music briefly</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
-      <div class="field"><label>Audio status <span class="hint">${(() => { const st = alerts.status(); const last = st.lastRing ? `last chime ${new Date(st.lastRing.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} via ${st.lastRing.path}` : 'no chime played yet'; return `engine ${st.context} · session ${st.session} · fallback ${st.media} · ${last}`; })()}</span></label></div>
+      <div class="field"><label>Audio status <span class="hint" id="audio-status">${audioStatusText()}</span></label></div>
     </div>
     <h2>Data</h2>
     <div class="group">
@@ -630,6 +639,7 @@ function tick() {
     alerts.cancelScheduled();
   }
   if (view === 'today' && a && (a.phase === 'working' || a.phase === 'resting')) renderTimer();
+  if (view === 'settings') { const el = $('audio-status'); if (el) el.textContent = audioStatusText(); }
 }
 
 setInterval(tick, 250);
