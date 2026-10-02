@@ -813,6 +813,12 @@ render();
 if (loadSource === 'backup') toast('Saved data was unreadable. Restored from backup.', 5000);
 if (loadSource === 'corrupt') toast('Saved data was unreadable and no backup existed. Started fresh.', 6000);
 
+// Ask the browser to treat this site's storage as persistent, which exempts it
+// from eviction under storage pressure where supported. Harmless elsewhere.
+if (navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().catch(() => {});
+}
+
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
