@@ -130,6 +130,10 @@ function renderCalendar() {
         cls = 'past empty';
         body = '<span class="counts"><span class="none">—</span></span>';
         dot = '<span class="dot none"></span>';
+      } else if (day.status === 'skipped') {
+        cls = 'past skipped';
+        body = '<span class="counts"><span class="none">skipped</span></span>';
+        dot = '<span class="dot hard"></span>';
       } else {
         const r = E.dayRating(day);
         cls = `past ${day.status}`;
@@ -141,7 +145,7 @@ function renderCalendar() {
       const day = state.days[date];
       const plan = todayPlan();
       cls = `today ${day?.status ?? ''}`;
-      body = countsHTML(plan.info);
+      body = day?.status === 'skipped' ? '<span class="counts"><span class="none">skipped</span></span>' : countsHTML(plan.info);
       const r = day ? E.dayRating(day) : null;
       dot = `<span class="dot ${r ?? (day?.status === 'complete' ? 'none' : 'pending')}"></span>`;
       if (day && day.sessions.filter((x) => x.outcome === 'completed').length > 1) repeat = '<span class="repeat">×' + day.sessions.filter((x) => x.outcome === 'completed').length + '</span>';
@@ -173,7 +177,9 @@ function renderStatus() {
   const total = E.maxLevelIndex(state.settings) + 1;
   const idx = plan.complete ? plan.info.index : E.levelInfo(state.settings, state.level).index;
   let badge = '';
+  if (state.days[today]?.status === 'skipped') ds.kind = 'skipped';
   switch (ds.kind) {
+    case 'skipped': badge = '<span class="badge skipped">Skipped today</span>'; break;
     case 'done': badge = `<span class="badge done">✓ Complete · next ${esc(fmtDate(ds.next))}</span>`; break;
     case 'repeat': badge = '<span class="badge repeat">Repeat required</span>'; break;
     case 'due': badge = '<span class="badge due">Due today</span>'; break;
@@ -218,7 +224,8 @@ function renderTimer() {
   } else {
     const ds = E.dueStatus(state, E.dateKey(now));
     text = mmss(s.workSeconds * 1000);
-    if (ds.kind === 'done') { phase = 'done'; caption = 'Done for today'; }
+    if (state.days[E.dateKey(now)]?.status === 'skipped') { phase = 'skipped'; caption = 'Skipped today'; }
+    else if (ds.kind === 'done') { phase = 'done'; caption = 'Done for today'; }
     else if (ds.kind === 'repeat') { caption = 'Repeat this level'; }
     else if (ds.kind === 'rest') { caption = 'Rest day'; }
     else { caption = `Tap to start · ${plan.info.itemA}`; }
@@ -246,6 +253,7 @@ function primaryAction() {
     if (ds.kind === 'done') return { label: 'Done for today', cls: 'done', disabled: true, secondary: { label: 'Extra session', action: 'startWork' } };
     if (ds.kind === 'repeat') return { label: 'Repeat level', cls: '', action: 'startWork' };
     if (ds.kind === 'rest') return { label: 'Start anyway', cls: '', action: 'startWork' };
+    if (state.days[E.dateKey(Date.now())]?.status === 'skipped') return { label: 'Start anyway', cls: '', action: 'startWork' };
     return { label: 'Start count 1', cls: '', action: 'startWork' };
   }
   switch (a.phase) {
@@ -290,6 +298,7 @@ function renderControls() {
   const canUndoClosed = !a && day && day.sessions.length > 0 && day.sessions[day.sessions.length - 1].outcome === 'completed';
   $('undo-count').hidden = !((a && a.count > 0) || canUndoClosed);
   $('reset-session').hidden = !a;
+  $('skip-today').hidden = Boolean(a) || Boolean(day);
 }
 
 // ---------------------------------------------------------------- plan
@@ -365,7 +374,7 @@ function renderSheet() {
   let html = `<div class="grip"></div><button class="close" data-close aria-label="Close">✕</button><h3>${esc(fmtDate(date))}${date === today ? ' · Today' : ''}</h3>`;
   const activeHere = state.active && state.active.date === date;
   const ratingOpts = (cur) => ['easy', 'medium', 'hard'].map((r) => `<option value="${r}" ${r === cur ? 'selected' : ''}>${r}</option>`).join('');
-  if (day) {
+  if (day && day.status !== 'skipped') {
     const lbl = E.levelLabel(day.level);
     const st = { complete: 'Complete', 'needs-repeat': 'Needs repeat', incomplete: 'Incomplete' }[day.status];
     html += `<div class="sub">${esc(lbl)} · ${st}${day.advanced ? ' · advanced ↑' : ''}${day.frozen ? ' · frozen' : ''}</div>`;
@@ -393,7 +402,13 @@ function renderSheet() {
     for (let k = 0; k < (info.itemB ? s.countsPerDay : 1); k++) {
       offOpts.push(`<option value="${k}" ${k === info.offset ? 'selected' : ''}>${s.countsPerDay - k} × ${esc(info.itemA)}${info.itemB ? ` · ${k} × ${esc(info.itemB)}` : ''}</option>`);
     }
-    html += `<div class="sub">${date === today ? 'Not started yet.' : 'Nothing recorded on this day.'}</div>`;
+    if (day) {
+      html += `<div class="sub"><span class="rating-dot hard"></span>Skipped${day.skipped === 'auto' ? ' · nothing was recorded on this scheduled day' : ' · marked by you'}</div>`;
+      html += '<div class="edit"><div class="edit-row"><span class="grow"></span><button class="btn small" data-act="unskip">Remove skip mark</button></div></div>';
+    } else {
+      html += `<div class="sub">${date === today ? 'Not started yet.' : 'Nothing recorded on this day.'}</div>`;
+      html += '<div class="edit"><div class="edit-row"><span class="grow"></span><button class="btn small danger" data-act="mark-skipped">Mark as skipped</button></div></div>';
+    }
     html += '<div class="edit"><div class="edit-title">Record a completed day</div>' +
       `<div class="edit-row"><span>Date</span><input type="date" data-add="date" value="${date}" max="${today}"></div>` +
       `<div class="edit-row"><span>Pair</span><select data-add="stage">${stageOpts}</select></div>` +
@@ -434,7 +449,7 @@ function renderHistory() {
     .map((d) => {
       const dt = E.keyToDate(d.date);
       const r = E.dayRating(d);
-      const st = { complete: 'Complete', 'needs-repeat': 'Needs repeat', incomplete: 'Incomplete' }[d.status];
+      const st = { complete: 'Complete', 'needs-repeat': 'Needs repeat', incomplete: 'Incomplete', skipped: 'Skipped' }[d.status];
       const done = d.sessions.filter((x) => x.outcome === 'completed').length;
       return (
         `<button class="day-card" data-date="${d.date}">` +
@@ -502,10 +517,10 @@ function renderSettings() {
     <div class="group">
       <div class="field"><label>Desktop notifications <span class="hint">${notifier.supported() ? (Notification.permission === 'granted' ? 'Enabled' : Notification.permission === 'denied' ? 'Blocked in browser settings' : 'Shown when the app is in the background') : 'Not supported here'}</span></label>
         <button class="btn small" data-act="notify" ${!notifier.supported() || Notification.permission !== 'default' ? 'disabled' : ''}>Enable</button></div>
-      <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 55}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 55}" aria-label="Chime volume"></div>
+      <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 40}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 40}" aria-label="Chime volume"></div>
       <div class="field"><label>Test chime</label><button class="btn small" data-act="test-sound">Play</button></div>
-      <div class="field"><label>On iPhone <span class="hint">${s.audioMode === 'always' ? 'Plays even on silent. Pauses music in other apps.' : 'Plays over music (it ducks). Needs the ring/silent switch set to ring.'}</span></label>
-        <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' ? 'selected' : ''}>Mix with other audio</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
+      <div class="field" ${'audioSession' in navigator ? '' : 'hidden'}><label>On iPhone <span class="hint">${{ always: 'Plays even on silent. Pauses music in other apps.', solo: 'Pauses music for the chime, then lets it resume.' }[s.audioMode] || 'Plays over music, asking it to duck.'}</span></label>
+        <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' && s.audioMode !== 'solo' ? 'selected' : ''}>Mix with other audio</option><option value="solo" ${s.audioMode === 'solo' ? 'selected' : ''}>Pause music briefly</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
       <div class="field"><label>Audio status <span class="hint">${(() => { const st = alerts.status(); const last = st.lastRing ? `last chime ${new Date(st.lastRing.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} via ${st.lastRing.path}` : 'no chime played yet'; return `engine ${st.context} · session ${st.session} · fallback ${st.media} · ${last}`; })()}</span></label></div>
     </div>
     <h2>Data</h2>
@@ -551,7 +566,8 @@ function render() {
   if ((!a || a.phase !== 'awaitingRating') && sheet?.kind === 'rating') sheet = null;
   renderSheet();
   alerts.setMode(state.settings.audioMode);
-  alerts.setVolume((state.settings.volume ?? 55) / 100);
+  alerts.setVolume((state.settings.volume ?? 40) / 100);
+  if (!a || a.endsAt == null) alerts.cancelScheduled();
   if (a && (a.phase === 'working' || a.phase === 'resting')) wake.acquire();
   else wake.release();
 }
@@ -565,21 +581,40 @@ function showView(name) {
 
 // ---------------------------------------------------------------- tick
 
+let deadlineTimer = null;
+let lastDate = E.dateKey(Date.now());
+
 function tick() {
+  // Midnight while the app is open: close out yesterday and mark misses.
+  const todayKey = E.dateKey(Date.now());
+  if (todayKey !== lastDate) {
+    lastDate = todayKey;
+    dispatch({ type: 'reconcile' });
+  }
   const a = state.active;
-  if (a && a.endsAt != null && Date.now() >= a.endsAt) {
-    const wasWork = a.phase === 'working';
-    const countBefore = a.count;
-    dispatch({ type: 'timerDone' });
-    alerts.setVolume((state.settings.volume ?? 55) / 100);
-    if (wasWork) {
-      alerts.ring('work');
-      notifier.notify('Tracker', `Count ${countBefore + 1} done`);
-    } else {
-      alerts.ring('rest');
-      notifier.notify('Tracker', 'Rest over');
+  if (a && a.endsAt != null) {
+    const remaining = a.endsAt - Date.now();
+    const kind = a.phase === 'working' ? 'work' : 'rest';
+    if (remaining <= 0) {
+      const wasWork = a.phase === 'working';
+      const countBefore = a.count;
+      // Claim a chime pre-scheduled on the audio clock before dispatching:
+      // render() clears any scheduled chime once no timer is running.
+      const covered = alerts.consumeScheduled(a.endsAt);
+      dispatch({ type: 'timerDone' });
+      alerts.setVolume((state.settings.volume ?? 40) / 100);
+      if (!covered) alerts.ring(kind);
+      notifier.notify('Tracker', wasWork ? `Count ${countBefore + 1} done` : 'Rest over');
+      return;
     }
-    return;
+    if (remaining <= 1200) alerts.schedule(kind, a.endsAt);
+    if (deadlineTimer == null) {
+      // A precise one-shot so the deadline lands within a few ms, not at the
+      // next 250 ms tick.
+      deadlineTimer = setTimeout(() => { deadlineTimer = null; tick(); }, remaining + 5);
+    }
+  } else {
+    alerts.cancelScheduled();
   }
   if (view === 'today' && a && (a.phase === 'working' || a.phase === 'resting')) renderTimer();
 }
@@ -588,7 +623,8 @@ setInterval(tick, 250);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     const today = E.dateKey(Date.now());
-    if (state.active && state.active.date !== today) dispatch({ type: 'reconcile' });
+    if (today !== lastDate) lastDate = today;
+    dispatch({ type: 'reconcile' });
     tick();
     render();
   }
@@ -609,6 +645,10 @@ $('undo-count').addEventListener('click', () => {
 });
 $('reset-session').addEventListener('click', () => {
   if (confirm("Reset today's session? Counts so far will be recorded as abandoned and the level will not change.")) dispatch({ type: 'resetSession' });
+});
+
+$('skip-today').addEventListener('click', () => {
+  if (confirm('Mark today as skipped? It will show in red and count as a missed day. You can still start a session later.')) dispatch({ type: 'markSkipped' });
 });
 
 $('cal').addEventListener('click', (e) => {
@@ -651,6 +691,14 @@ $('sheet').addEventListener('click', (e) => {
     sheet = null;
     dispatch({ type: 'deleteDay', date });
     toast('Day deleted');
+  } else if (btn.dataset.act === 'mark-skipped') {
+    if (!confirm(`Mark ${fmtDate(date)} as skipped?`)) return;
+    dispatch({ type: 'markSkipped', date });
+    toast('Marked as skipped');
+  } else if (btn.dataset.act === 'unskip') {
+    sheet = null;
+    dispatch({ type: 'deleteDay', date });
+    toast('Skip mark removed');
   } else if (btn.dataset.act === 'add-day') {
     const sel = (k) => $('sheet').querySelector(`[data-add=${k}]`).value;
     dispatch({ type: 'addDay', date, level: { stage: Number(sel('stage')), offset: Number(sel('offset')) }, rating: sel('rating') });
@@ -724,8 +772,8 @@ $('settings-form').addEventListener('click', async (e) => {
   else if (act === 'test-sound') {
     alerts.setVolume(Number($('settings-form').querySelector('[name=volume]').value) / 100);
     const r = alerts.ring('work');
-    toast(r.path === 'none' ? `No audio path available (engine: ${r.state})` : `Playing via ${r.path} (engine: ${r.state})`, 3500);
-    setTimeout(() => { if (view === 'settings') renderSettings(); }, 400);
+    toast(r.path === 'none' ? `No audio path available (engine: ${r.state})` : r.path === 'pending' ? `Starting audio engine (was ${r.state})…` : `Playing via ${r.path} (engine: ${r.state})`, 3500);
+    setTimeout(() => { if (view === 'settings') renderSettings(); }, 600);
   }
   else if (act === 'clear') { if (confirm('Delete all recorded days? This cannot be undone (a backup of the previous state is kept until the next change).')) dispatch({ type: 'clearHistory' }); }
   else if (act === 'reset-all') { if (confirm('Reset settings, level and history to defaults?')) replaceState(E.createState()); }

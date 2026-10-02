@@ -409,3 +409,21 @@ h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: upp
     --item-6: #1d5fd0;
   }
 }
+
+/* ------------------------------------------------------------ skipped days */
+.day.skipped {
+  border-color: var(--hard);
+  background: color-mix(in srgb, var(--hard) 16%, var(--card));
+  opacity: 1;
+}
+.day.skipped .counts .none { color: var(--hard); font-weight: 700; }
+.day.skipped .dot { background: var(--hard); }
+.day.today.skipped { border-color: var(--hard); background: color-mix(in srgb, var(--hard) 22%, var(--card)); }
+.day.today.skipped .dow { color: var(--hard); }
+.badge.skipped { background: color-mix(in srgb, var(--hard) 22%, transparent); color: var(--hard); }
+.day-card .st.skipped { color: var(--hard); }
+.ring.phase-skipped { --ring-color: var(--hard); }
+.ring.phase-skipped .ring-caption { color: var(--hard); }
+
+/* the freeze toggle is a <label>; keep it at its real size inside a field row */
+.field label.switch { flex: 0 0 51px; width: 51px; height: 31px; }

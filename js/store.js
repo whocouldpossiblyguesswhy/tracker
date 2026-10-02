@@ -59,6 +59,7 @@ export function normalize(raw) {
       let status = 'incomplete';
       if (completed.some((x) => x.rating !== 'hard')) status = 'complete';
       else if (completed.length > 0) status = 'needs-repeat';
+      else if (sessions.length === 0 && d.status === 'skipped') status = 'skipped';
       days[date] = {
         date,
         level: {
@@ -76,6 +77,7 @@ export function normalize(raw) {
         sessions,
         status,
         advanced: Boolean(d.advanced) && status === 'complete',
+        ...(status === 'skipped' ? { skipped: d.skipped === 'auto' ? 'auto' : 'manual' } : {}),
       };
     }
   }

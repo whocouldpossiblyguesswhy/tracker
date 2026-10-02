@@ -28,17 +28,18 @@ export function createAlerts() {
     [5.4, 0.08, 0.5],
   ];
 
-  // Slider percent → master gain. Perceptual (squared) curve, and the top of
-  // the range is deliberately modest: 100% ≈ 35% of the first edition's linear
-  // scale, and the default of 55 lands near that edition's 10%.
-  const gainFor = (v) => 0.35 * Math.pow(Math.min(1, Math.max(0, v)), 2);
+  // Slider percent → master gain. Perceptual (squared) curve. 100% ≈ 70% of
+  // the first edition's linear scale (phone speakers need the headroom), and
+  // the default of 40 lands near that edition's 10%.
+  const gainFor = (v) => 0.7 * Math.pow(Math.min(1, Math.max(0, v)), 2);
 
   // iOS 17+ Audio Session API. 'transient' plays over other audio (which ducks
   // and then resumes) but obeys the ring/silent switch. 'playback' ignores the
   // switch but pauses other apps' audio.
+  const SESSION_TYPES = { mix: 'transient', solo: 'transient-solo', always: 'playback' };
   function applySession() {
     try {
-      if (navigator.audioSession) navigator.audioSession.type = mode === 'always' ? 'playback' : 'transient';
+      if (navigator.audioSession) navigator.audioSession.type = SESSION_TYPES[mode] || 'transient';
     } catch {
       /* not supported */
     }
@@ -78,10 +79,11 @@ export function createAlerts() {
     return { master: out, input: filter };
   }
 
-  function strike(c, dest, freq, at, vel) {
+  function strike(c, dest, freq, at, vel, collect) {
     const detune = 1 + (Math.random() - 0.5) * 0.003;
     for (const [ratio, gain, len] of PARTIALS) {
       const osc = c.createOscillator();
+      if (collect) collect.push(osc);
       const g = c.createGain();
       osc.type = 'sine';
       osc.frequency.value = freq * ratio * detune;
@@ -96,7 +98,7 @@ export function createAlerts() {
     }
   }
 
-  function gust(c, dest, at, strikes, energy) {
+  function gust(c, dest, at, strikes, energy, collect) {
     let t = at;
     let last = -1;
     for (let i = 0; i < strikes; i++) {
@@ -105,19 +107,19 @@ export function createAlerts() {
       while (idx === last);
       last = idx;
       const vel = (0.25 + Math.random() * 0.5) * energy;
-      strike(c, dest, TUBES[idx], t, vel);
+      strike(c, dest, TUBES[idx], t, vel, collect);
       t += Math.random() < 0.3 ? 0.2 + Math.random() * 0.3 : 0.06 + Math.random() * 0.16;
     }
     return t;
   }
 
-  function chime(c, dest, kind, at) {
+  function chime(c, dest, kind, at, collect) {
     if (kind === 'work') {
       // a short gust, a breath, then a couple of trailing notes
-      const end = gust(c, dest, at, 6, 1.0);
-      return gust(c, dest, end + 0.4 + Math.random() * 0.3, 3, 0.55);
+      const end = gust(c, dest, at, 6, 1.0, collect);
+      return gust(c, dest, end + 0.4 + Math.random() * 0.3, 3, 0.55, collect);
     }
-    return gust(c, dest, at, 3, 0.7);
+    return gust(c, dest, at, 3, 0.7, collect);
   }
 
   // ------------------------------------------------------------ offline copy
@@ -204,11 +206,65 @@ export function createAlerts() {
   // ------------------------------------------------------------ public
 
   function setMode(m) {
-    const next = m === 'always' ? 'always' : 'mix';
+    const next = SESSION_TYPES[m] ? m : 'mix';
     if (next !== mode) {
       mode = next;
       applySession();
     }
+  }
+
+  // ------------------------------------------------------------ scheduling
+  // Called when a timer is within a second of its deadline: warm the engine
+  // and schedule the chime on the audio clock so it lands on the deadline.
+  let scheduled = null;
+
+  function cancelScheduled() {
+    if (!scheduled) return;
+    clearTimeout(scheduled.timer);
+    for (const n of scheduled.nodes) {
+      try { n.stop(0); } catch { /* already stopped */ }
+    }
+    scheduled = null;
+  }
+
+  function schedule(kind, endsAt) {
+    if (scheduled && scheduled.endsAt === endsAt) return;
+    cancelScheduled();
+    unlock();
+    const s = { endsAt, kind, nodes: [], timer: null, played: false };
+    scheduled = s;
+    if (volume <= 0) { s.played = true; return; }
+    const arm = () => {
+      if (scheduled !== s || s.played || !ctx || ctx.state !== 'running') return;
+      s.played = true;
+      const at = ctx.currentTime + Math.max(0, endsAt - Date.now()) / 1000;
+      master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
+      chime(ctx, input, kind, at, s.nodes);
+      lastRing = { at: endsAt, kind, path: 'web-audio (scheduled)', state: ctx.state };
+    };
+    if (ctx && ctx.state === 'running') arm();
+    else if (ctx) ctx.resume().then(arm).catch(() => {});
+    // If the engine never came up in time, the clip plays at the deadline.
+    s.timer = setTimeout(() => {
+      if (scheduled === s && !s.played) {
+        s.played = true;
+        const ok = playMedia(kind);
+        lastRing = { at: endsAt, kind, path: ok ? 'media (scheduled)' : 'none', state: ctx ? ctx.state : 'no-context' };
+      }
+    }, Math.max(0, endsAt - Date.now()));
+  }
+
+  // At the deadline: true if a scheduled chime already covers it.
+  function consumeScheduled(endsAt) {
+    if (!scheduled || scheduled.endsAt !== endsAt) return false;
+    const played = scheduled.played;
+    if (played) {
+      clearTimeout(scheduled.timer);
+      scheduled = null; // let the sound ring out
+    } else {
+      cancelScheduled();
+    }
+    return played;
   }
 
   function setVolume(v) {
@@ -259,26 +315,49 @@ export function createAlerts() {
     }
   }
 
+  function playLive(kind) {
+    master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
+    chime(ctx, input, kind, ctx.currentTime + 0.02);
+  }
+
   function ring(kind) {
     unlock();
-    const live = ctx && ctx.state === 'running';
-    let path = 'none';
-    if (volume > 0) {
-      if (live) {
-        master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
-        chime(ctx, input, kind, ctx.currentTime + 0.02);
-        path = 'web-audio';
-      } else if (playMedia(kind)) {
-        path = 'media';
-      }
-    }
-    lastRing = { at: Date.now(), kind, path, state: ctx ? ctx.state : 'no-context' };
+    const info = { at: Date.now(), kind, path: 'none', state: ctx ? ctx.state : 'no-context' };
+    lastRing = info;
     try {
       if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.([150, 80, 150]);
     } catch {
       /* ignore */
     }
-    return lastRing;
+    if (volume <= 0) return info;
+    if (ctx && ctx.state === 'running') {
+      playLive(kind);
+      info.path = 'web-audio';
+      return info;
+    }
+    // Engine not running yet (iOS creates it suspended and resumes it
+    // asynchronously). Play live as soon as it resumes; if that has not
+    // happened shortly, play the pre-rendered clip instead.
+    let done = false;
+    const finish = (path) => {
+      if (done) return;
+      done = true;
+      info.path = path;
+      info.state = ctx ? ctx.state : 'no-context';
+    };
+    if (ctx) {
+      ctx.resume().then(() => {
+        if (!done && ctx.state === 'running') {
+          playLive(kind);
+          finish('web-audio');
+        }
+      }).catch(() => {});
+    }
+    setTimeout(() => {
+      if (!done) finish(playMedia(kind) ? 'media' : 'none');
+    }, 250);
+    info.path = 'pending';
+    return info;
   }
 
   function status() {
@@ -304,7 +383,11 @@ export function createAlerts() {
     }
   });
 
-  return { unlock, ring, setMode, setVolume, status };
+  // Offline rendering needs no user gesture, so prepare the clip right away;
+  // the first tap then only has to unlock the element.
+  renderMedia();
+
+  return { unlock, ring, setMode, setVolume, status, schedule, cancelScheduled, consumeScheduled };
 }
 
 export function createWakeLock() {

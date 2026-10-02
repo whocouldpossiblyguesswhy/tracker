@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   ratingAtCount: 3,
   restDaysBetween: 0,
   frozen: false,
-  volume: 55,
+  volume: 40,
   audioMode: 'mix',
 });
 
@@ -191,6 +191,37 @@ function afterCount(state, now) {
   }
 }
 
+function skippedDay(state, date, how) {
+  return {
+    date,
+    level: snapshotLevel(state.settings, state.level),
+    restDaysBetween: state.settings.restDaysBetween,
+    frozen: state.settings.frozen,
+    sessions: [],
+    status: 'skipped',
+    skipped: how, // 'manual' | 'auto'
+    advanced: false,
+  };
+}
+
+// Latest completed day strictly before `date`.
+function lastCompleteBefore(state, date) {
+  let best = null;
+  for (const [d, day] of Object.entries(state.days)) {
+    if (day.status === 'complete' && d < date && (!best || d > best)) best = d;
+  }
+  return best;
+}
+
+// Was a session due on `date`, given the rest-day cadence in force after the
+// previous completed day? Days before the first completion all count as due.
+export function wasScheduled(state, date) {
+  const last = lastCompleteBefore(state, date);
+  if (!last) return true;
+  const gap = (state.days[last].restDaysBetween ?? state.settings.restDaysBetween) + 1;
+  return date >= addDays(last, gap);
+}
+
 // Reducer. Returns a new state; never mutates the input.
 export function reduce(input, action, now = Date.now()) {
   const state = cloneState(input);
@@ -203,6 +234,11 @@ export function reduce(input, action, now = Date.now()) {
       if (!a) {
         const date = dateKey(now);
         const day = ensureDay(state, date);
+        if (day.status === 'skipped') {
+          // Starting a session un-skips the day.
+          day.status = 'incomplete';
+          delete day.skipped;
+        }
         state.active = {
           date,
           startedAt: now,
@@ -320,13 +356,34 @@ export function reduce(input, action, now = Date.now()) {
       return state;
     }
 
-    // Called on app load: abandon a session left over from a previous day.
+    // Called on app load, when the app comes back to the foreground, and at
+    // midnight: abandon a session left over from a previous day, and mark
+    // every past scheduled day with nothing recorded as skipped.
     case 'reconcile': {
-      if (a && a.date !== dateKey(now)) {
+      const today = dateKey(now);
+      let changed = false;
+      if (a && a.date !== today) {
         closeActive(state, 'abandoned', now);
-        return state;
+        changed = true;
       }
-      return input;
+      const dates = Object.keys(state.days).sort();
+      if (dates.length > 0) {
+        for (let d = addDays(dates[0], 1); d < today; d = addDays(d, 1)) {
+          if (state.days[d] || !wasScheduled(state, d)) continue;
+          state.days[d] = skippedDay(state, d, 'auto');
+          changed = true;
+        }
+      }
+      return changed ? state : input;
+    }
+
+    // Mark a day (today or a past day) as deliberately skipped.
+    case 'markSkipped': {
+      const date = action.date ?? dateKey(now);
+      if (!DATE_RE.test(date) || date > dateKey(now) || state.days[date]) return input;
+      if (state.active && state.active.date === date) return input;
+      state.days[date] = skippedDay(state, date, 'manual');
+      return state;
     }
 
     case 'updateSettings': {
@@ -340,7 +397,7 @@ export function reduce(input, action, now = Date.now()) {
       if (next.items.length === 0) next.items = ['1'];
       next.frozen = Boolean(next.frozen);
       next.volume = next.volume === undefined ? DEFAULT_SETTINGS.volume : clamp(Math.round(Number(next.volume)) || 0, 0, 100);
-      next.audioMode = next.audioMode === 'always' ? 'always' : 'mix';
+      next.audioMode = ['mix', 'solo', 'always'].includes(next.audioMode) ? next.audioMode : 'mix';
       state.settings = next;
       state.level = clampLevel(next, state.level);
       if (state.active) state.active.count = Math.min(state.active.count, next.countsPerDay);
@@ -369,7 +426,8 @@ export function reduce(input, action, now = Date.now()) {
     // Record a completed day that the app missed or logged on the wrong device.
     case 'addDay': {
       const date = action.date;
-      if (!DATE_RE.test(date || '') || state.days[date]) return input;
+      // A skipped day may be replaced by a real record.
+      if (!DATE_RE.test(date || '') || (state.days[date] && state.days[date].status !== 'skipped')) return input;
       if (state.active && state.active.date === date) return input;
       const rating = RATINGS.includes(action.rating) ? action.rating : 'medium';
       // noon of that day, but never in the future (today's entry may be reopened by undo)
@@ -520,9 +578,10 @@ export function dayNumber(state, today) {
 export function historySummary(state) {
   const days = Object.values(state.days).sort((a, b) => (a.date < b.date ? 1 : -1));
   const complete = days.filter((d) => d.status === 'complete').length;
+  const skipped = days.filter((d) => d.status === 'skipped').length;
   const repeats = days.reduce(
     (n, d) => n + d.sessions.filter((x) => x.rating === 'hard' && x.outcome === 'completed').length,
     0,
   );
-  return { days, complete, repeats };
+  return { days, complete, repeats, skipped };
 }
