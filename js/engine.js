@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   ratingAtCount: 3,
   restDaysBetween: 0,
   frozen: false,
-  volume: 30,
+  volume: 35,
   audioMode: 'mix',
 });
 

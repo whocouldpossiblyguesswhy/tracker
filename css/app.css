@@ -433,3 +433,13 @@ h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: upp
 .day .dots .dot { margin-top: 0; }
 .day-card .st .rating-dot { margin-right: 3px; }
 .edit-row .icon-btn { width: 30px; height: 30px; }
+
+/* "×2" sits in the flow, directly under the weekday label */
+.day .repeat {
+  position: static;
+  font-size: 9px; font-weight: 700; line-height: 13px;
+  color: var(--work);
+  background: color-mix(in srgb, var(--work) 18%, transparent);
+  border-radius: 999px; padding: 0 5px;
+  margin: -1px 0 0;
+}

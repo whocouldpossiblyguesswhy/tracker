@@ -31,7 +31,7 @@ export function createAlerts() {
   // Slider percent → master gain. Perceptual (squared) curve. The synth runs
   // hot and a compressor keeps the top of the range clean; 100% is roughly
   // double the previous edition's ceiling and the default of 30 sits slightly
-  // above its old default loudness.
+  // above its old default loudness. (Later raised again: strikes at 0.8.)
   const gainFor = (v) => 1.0 * Math.pow(Math.min(1, Math.max(0, v)), 2);
 
   // iOS 17+ Audio Session API. 'transient' plays over other audio (which ducks
@@ -66,9 +66,9 @@ export function createAlerts() {
     const out = c.createGain();
     out.gain.value = gain;
     const comp = c.createDynamicsCompressor();
-    comp.threshold.value = -14;
+    comp.threshold.value = -20;
     comp.knee.value = 12;
-    comp.ratio.value = 6;
+    comp.ratio.value = 8;
     comp.attack.value = 0.003;
     comp.release.value = 0.18;
     out.connect(comp).connect(c.destination);
@@ -95,7 +95,7 @@ export function createAlerts() {
       const g = c.createGain();
       osc.type = 'sine';
       osc.frequency.value = freq * ratio * detune;
-      const peak = vel * gain * 0.45;
+      const peak = vel * gain * 0.8;
       const ring = len * (0.75 + vel * 0.5);
       g.gain.setValueAtTime(0, at);
       g.gain.linearRampToValueAtTime(peak, at + 0.012);

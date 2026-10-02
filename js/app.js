@@ -174,7 +174,7 @@ function renderCalendar() {
     }
     cells.push(
       `<button class="day ${cls}" data-date="${date}" aria-label="${fmtDate(date)}">` +
-        `<span class="dow">${i === 0 ? 'Today' : dow}</span><span class="dom">${dom}</span>${body}${dot}${repeat}</button>`,
+        `<span class="dow">${i === 0 ? 'Today' : dow}</span>${repeat}<span class="dom">${dom}</span>${body}${dot}</button>`,
     );
   }
   $('cal').innerHTML = cells.join('');
@@ -530,7 +530,7 @@ function renderSettings() {
     <div class="group">
       <div class="field"><label>Desktop notifications <span class="hint">${notifier.supported() ? (Notification.permission === 'granted' ? 'Enabled' : Notification.permission === 'denied' ? 'Blocked in browser settings' : 'Shown when the app is in the background') : 'Not supported here'}</span></label>
         <button class="btn small" data-act="notify" ${!notifier.supported() || Notification.permission !== 'default' ? 'disabled' : ''}>Enable</button></div>
-      <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 30}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 30}" aria-label="Chime volume"></div>
+      <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 35}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 35}" aria-label="Chime volume"></div>
       <div class="field"><label>Test chime</label><button class="btn small" data-act="test-sound">Play</button></div>
       <div class="field" ${'audioSession' in navigator ? '' : 'hidden'}><label>On iPhone <span class="hint">${{ always: 'Plays even on silent. Pauses music in other apps.', solo: 'Pauses music for the chime, then lets it resume.' }[s.audioMode] || 'Plays over music, asking it to duck.'}</span></label>
         <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' && s.audioMode !== 'solo' ? 'selected' : ''}>Mix with other audio</option><option value="solo" ${s.audioMode === 'solo' ? 'selected' : ''}>Pause music briefly</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
@@ -579,7 +579,7 @@ function render() {
   if ((!a || a.phase !== 'awaitingRating') && sheet?.kind === 'rating') sheet = null;
   renderSheet();
   alerts.setMode(state.settings.audioMode);
-  alerts.setVolume((state.settings.volume ?? 30) / 100);
+  alerts.setVolume((state.settings.volume ?? 35) / 100);
   if (!a || a.endsAt == null) alerts.cancelScheduled();
   if (a && (a.phase === 'working' || a.phase === 'resting')) wake.acquire();
   else wake.release();
@@ -615,7 +615,7 @@ function tick() {
       // render() clears any scheduled chime once no timer is running.
       const covered = alerts.consumeScheduled(a.endsAt);
       dispatch({ type: 'timerDone' });
-      alerts.setVolume((state.settings.volume ?? 30) / 100);
+      alerts.setVolume((state.settings.volume ?? 35) / 100);
       if (!covered) alerts.ring(kind);
       notifier.notify('Tracker', wasWork ? `Count ${countBefore + 1} done` : 'Rest over');
       return;
