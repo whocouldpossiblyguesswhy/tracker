@@ -394,7 +394,8 @@ function renderSheet() {
       offOpts.push(`<option value="${k}" ${k === info.offset ? 'selected' : ''}>${s.countsPerDay - k} × ${esc(info.itemA)}${info.itemB ? ` · ${k} × ${esc(info.itemB)}` : ''}</option>`);
     }
     html += `<div class="sub">${date === today ? 'Not started yet.' : 'Nothing recorded on this day.'}</div>`;
-    html += '<div class="edit"><div class="edit-title">Record a completed day here</div>' +
+    html += '<div class="edit"><div class="edit-title">Record a completed day</div>' +
+      `<div class="edit-row"><span>Date</span><input type="date" data-add="date" value="${date}" max="${today}"></div>` +
       `<div class="edit-row"><span>Pair</span><select data-add="stage">${stageOpts}</select></div>` +
       `<div class="edit-row"><span>Split</span><select data-add="offset">${offOpts.join('')}</select></div>` +
       `<div class="edit-row"><span>Rating</span><select data-add="rating">${ratingOpts(sheet.addRating ?? 'medium')}</select></div>` +
@@ -503,6 +504,9 @@ function renderSettings() {
         <button class="btn small" data-act="notify" ${!notifier.supported() || Notification.permission !== 'default' ? 'disabled' : ''}>Enable</button></div>
       <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 55}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 55}" aria-label="Chime volume"></div>
       <div class="field"><label>Test chime</label><button class="btn small" data-act="test-sound">Play</button></div>
+      <div class="field"><label>On iPhone <span class="hint">${s.audioMode === 'always' ? 'Plays even on silent. Pauses music in other apps.' : 'Plays over music (it ducks). Needs the ring/silent switch set to ring.'}</span></label>
+        <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' ? 'selected' : ''}>Mix with other audio</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
+      <div class="field"><label>Audio status <span class="hint">${(() => { const st = alerts.status(); const last = st.lastRing ? `last chime ${new Date(st.lastRing.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} via ${st.lastRing.path}` : 'no chime played yet'; return `engine ${st.context} · session ${st.session} · fallback ${st.media} · ${last}`; })()}</span></label></div>
     </div>
     <h2>Data</h2>
     <div class="group">
@@ -523,6 +527,7 @@ function readSettingsForm() {
     restDaysBetween: num('restDaysBetween'),
     frozen: form.querySelector('[name=frozen]').checked,
     volume: num('volume'),
+    audioMode: form.querySelector('[name=audioMode]').value,
     items: [...form.querySelectorAll('input[data-item]')].map((el) => el.value.trim()).filter(Boolean),
   };
 }
@@ -545,6 +550,8 @@ function render() {
   if (a && a.phase === 'awaitingRating' && (!sheet || sheet.kind !== 'rating')) sheet = { kind: 'rating' };
   if ((!a || a.phase !== 'awaitingRating') && sheet?.kind === 'rating') sheet = null;
   renderSheet();
+  alerts.setMode(state.settings.audioMode);
+  alerts.setVolume((state.settings.volume ?? 55) / 100);
   if (a && (a.phase === 'working' || a.phase === 'resting')) wake.acquire();
   else wake.release();
 }
@@ -564,12 +571,12 @@ function tick() {
     const wasWork = a.phase === 'working';
     const countBefore = a.count;
     dispatch({ type: 'timerDone' });
-    const vol = (state.settings.volume ?? 55) / 100;
+    alerts.setVolume((state.settings.volume ?? 55) / 100);
     if (wasWork) {
-      alerts.ring('work', vol);
+      alerts.ring('work');
       notifier.notify('Tracker', `Count ${countBefore + 1} done`);
     } else {
-      alerts.ring('rest', vol);
+      alerts.ring('rest');
       notifier.notify('Tracker', 'Rest over');
     }
     return;
@@ -658,7 +665,8 @@ $('sheet').addEventListener('change', (e) => {
     dispatch({ type: 'setSessionRating', date: sheet.date, index: Number(t.dataset.rateSession), rating: t.value });
     return;
   }
-  if (t.dataset.add === 'stage') { sheet.addStage = Number(t.value); sheet.addOffset = 0; render(); }
+  if (t.dataset.add === 'date') { const today = E.dateKey(Date.now()); if (t.value && t.value <= today) { sheet.date = t.value; render(); } }
+  else if (t.dataset.add === 'stage') { sheet.addStage = Number(t.value); sheet.addOffset = 0; render(); }
   else if (t.dataset.add === 'offset') { sheet.addOffset = Number(t.value); render(); }
   else if (t.dataset.add === 'rating') { sheet.addRating = t.value; }
 });
@@ -672,6 +680,10 @@ document.querySelectorAll('.tab').forEach((el) => el.addEventListener('click', (
 
 $('export-json').addEventListener('click', () => download(`tracker-${E.dateKey(Date.now())}.json`, serialize(state), 'application/json'));
 $('export-csv').addEventListener('click', () => download(`tracker-${E.dateKey(Date.now())}.csv`, toCSV(state), 'text/csv'));
+$('record-day').addEventListener('click', () => {
+  sheet = { kind: 'day', date: E.dateKey(Date.now()) };
+  render();
+});
 $('import-json').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   e.target.value = '';
@@ -709,7 +721,12 @@ $('settings-form').addEventListener('click', async (e) => {
   else if (act === 'item-del') { if (confirm(`Remove item "${items[i]}"?`)) { items.splice(i, 1); dispatch({ type: 'updateSettings', settings: { items } }); } }
   else if (act === 'item-add') { items.push(`${items.length + 1}`); dispatch({ type: 'updateSettings', settings: { items } }); }
   else if (act === 'notify') { await notifier.request(); render(); }
-  else if (act === 'test-sound') { alerts.unlock(); alerts.ring('work', Number($('settings-form').querySelector('[name=volume]').value) / 100); }
+  else if (act === 'test-sound') {
+    alerts.setVolume(Number($('settings-form').querySelector('[name=volume]').value) / 100);
+    const r = alerts.ring('work');
+    toast(r.path === 'none' ? `No audio path available (engine: ${r.state})` : `Playing via ${r.path} (engine: ${r.state})`, 3500);
+    setTimeout(() => { if (view === 'settings') renderSettings(); }, 400);
+  }
   else if (act === 'clear') { if (confirm('Delete all recorded days? This cannot be undone (a backup of the previous state is kept until the next change).')) dispatch({ type: 'clearHistory' }); }
   else if (act === 'reset-all') { if (confirm('Reset settings, level and history to defaults?')) replaceState(E.createState()); }
 });

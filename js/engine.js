@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   restDaysBetween: 0,
   frozen: false,
   volume: 55,
+  audioMode: 'mix',
 });
 
 export const RATINGS = ['easy', 'medium', 'hard'];
@@ -339,6 +340,7 @@ export function reduce(input, action, now = Date.now()) {
       if (next.items.length === 0) next.items = ['1'];
       next.frozen = Boolean(next.frozen);
       next.volume = next.volume === undefined ? DEFAULT_SETTINGS.volume : clamp(Math.round(Number(next.volume)) || 0, 0, 100);
+      next.audioMode = next.audioMode === 'always' ? 'always' : 'mix';
       state.settings = next;
       state.level = clampLevel(next, state.level);
       if (state.active) state.active.count = Math.min(state.active.count, next.countsPerDay);
