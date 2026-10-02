@@ -226,6 +226,21 @@ export function createAlerts() {
   // and schedule the chime on the audio clock so it lands on the deadline.
   let scheduled = null;
 
+  // iOS gives audio back to other apps only when our audio session goes
+  // inactive, and WebKit keeps it active while the context is running. So in
+  // the modes that interrupt other audio, suspend the engine once the chime
+  // has rung out; the next schedule()/ring() wakes it again.
+  let releaseTimer = null;
+  function releaseLater(kind, delayMs) {
+    clearTimeout(releaseTimer);
+    if (mode === 'mix') return;
+    const tail = kind === 'work' ? 5500 : 4000;
+    releaseTimer = setTimeout(() => {
+      releaseTimer = null;
+      if (ctx && ctx.state === 'running' && !scheduled) ctx.suspend().catch(() => {});
+    }, Math.max(0, delayMs) + tail);
+  }
+
   function cancelScheduled() {
     if (!scheduled) return;
     clearTimeout(scheduled.timer);
@@ -249,6 +264,7 @@ export function createAlerts() {
       master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
       chime(ctx, input, kind, at, s.nodes);
       lastRing = { at: endsAt, kind, path: 'web-audio (scheduled)', state: ctx.state };
+      releaseLater(kind, endsAt - Date.now());
     };
     if (ctx && ctx.state === 'running') arm();
     else if (ctx) ctx.resume().then(arm).catch(() => {});
@@ -290,6 +306,8 @@ export function createAlerts() {
     try {
       const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
       applySession();
+      clearTimeout(releaseTimer);
+      releaseTimer = null;
       if (AC && !ctx) {
         ctx = new AC();
         const g = buildGraph(ctx, gainFor(volume));
@@ -326,6 +344,7 @@ export function createAlerts() {
   function playLive(kind) {
     master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
     chime(ctx, input, kind, ctx.currentTime + 0.02);
+    releaseLater(kind, 0);
   }
 
   function ring(kind) {
@@ -384,9 +403,11 @@ export function createAlerts() {
     };
   }
 
-  // Coming back to the app: make sure the context is running again.
+  // Coming back to the app with a chime pending: make sure the context is
+  // running again. (Without one pending, leave it alone so other apps' audio
+  // is not interrupted just by opening the app.)
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running') {
+    if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running' && (scheduled || mode === 'mix')) {
       ctx.resume().catch(() => {});
     }
   });

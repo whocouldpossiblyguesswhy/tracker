@@ -508,7 +508,7 @@ function renderSettings() {
     <h2>Counts</h2>
     <div class="group">
       <div class="field"><label>Counts per day</label><input type="number" min="1" max="99" name="countsPerDay" value="${s.countsPerDay}"></div>
-      <div class="field"><label>Rate difficulty on count</label><input type="number" min="1" max="${s.countsPerDay}" name="ratingAtCount" value="${s.ratingAtCount}"></div>
+      <div class="field"><label>Rate difficulty <span class="hint">Easy / medium / hard prompt. Default: after count 3.</span></label><select name="ratingAtCount">${Array.from({ length: s.countsPerDay }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === s.ratingAtCount ? "selected" : ""}>After count ${n}${n === s.countsPerDay ? " (after completion)" : ""}</option>`).join("")}</select></div>
     </div>
     <h2>Items</h2>
     <div class="group">
