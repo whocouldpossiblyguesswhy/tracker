@@ -193,6 +193,7 @@ export function createAlerts() {
   // played once from a tap. Do that silently.
   function unlockMedia() {
     if (media.unlocked) return;
+    let ok = true;
     for (const kind of ['work', 'rest']) {
       const el = media[kind];
       if (!el || !el.src) return;
@@ -200,24 +201,42 @@ export function createAlerts() {
         el.muted = true;
         const p = el.play();
         if (p && p.then) {
-          p.then(() => { el.pause(); el.currentTime = 0; el.muted = false; }).catch(() => { el.muted = false; });
+          p.then(() => { el.pause(); el.currentTime = 0; el.muted = false; })
+            .catch(() => { el.muted = false; media.unlocked = false; });
         } else {
           el.pause(); el.currentTime = 0; el.muted = false;
         }
       } catch {
         el.muted = false;
+        ok = false;
       }
     }
-    media.unlocked = true;
+    // Optimistic; a rejected play() above clears it so the next tap retries.
+    media.unlocked = ok;
   }
 
   // ------------------------------------------------------------ public
+
+  // In the modes that interrupt other audio, the chime plays only through the
+  // <audio> element: when the clip ends, WebKit ends its media session and iOS
+  // hands playback back to the other app. A live Web Audio engine would keep
+  // the session held, so it is closed in those modes.
+  const interrupting = () => mode !== 'mix';
+
+  function closeEngine() {
+    if (!ctx) return;
+    try { ctx.close().catch(() => {}); } catch { /* ignore */ }
+    ctx = null;
+    master = null;
+    input = null;
+  }
 
   function setMode(m) {
     const next = SESSION_TYPES[m] ? m : 'mix';
     if (next !== mode) {
       mode = next;
       applySession();
+      if (interrupting()) closeEngine();
     }
   }
 
@@ -257,6 +276,18 @@ export function createAlerts() {
     const s = { endsAt, kind, nodes: [], timer: null, played: false };
     scheduled = s;
     if (volume <= 0) { s.played = true; return; }
+    if (interrupting()) {
+      // Clip only: it plays at the deadline and ends on its own, releasing
+      // the audio session so the other app resumes.
+      s.timer = setTimeout(() => {
+        if (scheduled === s && !s.played) {
+          s.played = true;
+          const ok = playMedia(kind);
+          lastRing = { at: endsAt, kind, path: ok ? 'media (scheduled)' : 'none', state: 'engine closed' };
+        }
+      }, Math.max(0, endsAt - Date.now()));
+      return;
+    }
     const arm = () => {
       if (scheduled !== s || s.played || !ctx || ctx.state !== 'running') return;
       s.played = true;
@@ -308,6 +339,12 @@ export function createAlerts() {
       applySession();
       clearTimeout(releaseTimer);
       releaseTimer = null;
+      if (interrupting()) {
+        closeEngine();
+        if (media.volume == null) renderMedia().then(unlockMedia);
+        else unlockMedia();
+        return;
+      }
       if (AC && !ctx) {
         ctx = new AC();
         const g = buildGraph(ctx, gainFor(volume));
@@ -357,6 +394,11 @@ export function createAlerts() {
       /* ignore */
     }
     if (volume <= 0) return info;
+    if (interrupting()) {
+      info.path = playMedia(kind) ? 'media' : 'none';
+      info.state = 'engine closed';
+      return info;
+    }
     if (ctx && ctx.state === 'running') {
       playLive(kind);
       info.path = 'web-audio';
@@ -395,7 +437,7 @@ export function createAlerts() {
       /* ignore */
     }
     return {
-      context: ctx ? ctx.state : 'not created',
+      context: ctx ? ctx.state : interrupting() ? 'closed (clip mode)' : 'not created',
       session,
       media: media.work && media.work.src ? (media.unlocked ? 'ready' : 'rendered') : 'none',
       mode,
