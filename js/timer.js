@@ -28,10 +28,11 @@ export function createAlerts() {
     [5.4, 0.08, 0.5],
   ];
 
-  // Slider percent → master gain. Perceptual (squared) curve. 100% ≈ 70% of
-  // the first edition's linear scale (phone speakers need the headroom), and
-  // the default of 40 lands near that edition's 10%.
-  const gainFor = (v) => 0.7 * Math.pow(Math.min(1, Math.max(0, v)), 2);
+  // Slider percent → master gain. Perceptual (squared) curve. The synth runs
+  // hot and a compressor keeps the top of the range clean; 100% is roughly
+  // double the previous edition's ceiling and the default of 30 sits slightly
+  // above its old default loudness.
+  const gainFor = (v) => 1.0 * Math.pow(Math.min(1, Math.max(0, v)), 2);
 
   // iOS 17+ Audio Session API. 'transient' plays over other audio (which ducks
   // and then resumes) but obeys the ring/silent switch. 'playback' ignores the
@@ -61,9 +62,16 @@ export function createAlerts() {
   }
 
   function buildGraph(c, gain) {
+    // Master gain → compressor (keeps the louder settings clean) → output.
     const out = c.createGain();
     out.gain.value = gain;
-    out.connect(c.destination);
+    const comp = c.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.knee.value = 12;
+    comp.ratio.value = 6;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.18;
+    out.connect(comp).connect(c.destination);
     const filter = c.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 4200;
@@ -87,7 +95,7 @@ export function createAlerts() {
       const g = c.createGain();
       osc.type = 'sine';
       osc.frequency.value = freq * ratio * detune;
-      const peak = vel * gain * 0.25;
+      const peak = vel * gain * 0.45;
       const ring = len * (0.75 + vel * 0.5);
       g.gain.setValueAtTime(0, at);
       g.gain.linearRampToValueAtTime(peak, at + 0.012);

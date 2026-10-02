@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   ratingAtCount: 3,
   restDaysBetween: 0,
   frozen: false,
-  volume: 40,
+  volume: 30,
   audioMode: 'mix',
 });
 
@@ -204,6 +204,16 @@ function skippedDay(state, date, how) {
   };
 }
 
+// Day status is fully determined by its sessions.
+function recomputeStatus(day) {
+  const completed = day.sessions.filter((x) => x.outcome === 'completed');
+  if (completed.some((x) => x.rating !== 'hard')) day.status = 'complete';
+  else if (completed.length > 0) day.status = 'needs-repeat';
+  else day.status = 'incomplete';
+  day.advanced = day.advanced && day.status === 'complete';
+  delete day.skipped;
+}
+
 // Latest completed day strictly before `date`.
 function lastCompleteBefore(state, date) {
   let best = null;
@@ -375,6 +385,30 @@ export function reduce(input, action, now = Date.now()) {
         }
       }
       return changed ? state : input;
+    }
+
+    // Append a completed session to an existing day (e.g. a repeat that was
+    // done but not logged). Status follows the sessions; level untouched.
+    case 'addSession': {
+      const day = state.days[action.date];
+      if (!day || day.status === 'skipped') return input;
+      if (state.active && state.active.date === action.date) return input;
+      const rating = RATINGS.includes(action.rating) ? action.rating : 'medium';
+      const noon = keyToDate(action.date).getTime() + 12 * 3600 * 1000;
+      const lastEnd = day.sessions.reduce((m, x) => Math.max(m, x.finishedAt || 0), 0);
+      const ts = Math.min(now, Math.max(noon, lastEnd + 60 * 1000));
+      day.sessions.push({ startedAt: ts, finishedAt: ts, countsDone: day.level.total, rating, outcome: 'completed' });
+      recomputeStatus(day);
+      return state;
+    }
+
+    case 'removeSession': {
+      const day = state.days[action.date];
+      if (!day || !day.sessions[action.index]) return input;
+      if (state.active && state.active.date === action.date) return input;
+      day.sessions.splice(action.index, 1);
+      recomputeStatus(day);
+      return state;
     }
 
     // Mark a day (today or a past day) as deliberately skipped.

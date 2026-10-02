@@ -110,6 +110,20 @@ function countsHTML(level, cls = '') {
   return `<span class="counts ${cls}">${parts.join('')}</span>`;
 }
 
+// One dot per completed session, coloured by its rating. `empty` is the dot
+// style when the day has no completed session yet.
+function ratingDots(day, empty) {
+  const done = day ? day.sessions.filter((x) => x.outcome === 'completed') : [];
+  if (done.length === 0) return `<span class="dots"><span class="dot ${empty}"></span></span>`;
+  return `<span class="dots">${done.map((x) => `<span class="dot ${x.rating ?? 'none'}"></span>`).join('')}</span>`;
+}
+
+// "×2" in the cell corner when a day holds more than one completed session.
+function repeatBadge(day) {
+  const n = day ? day.sessions.filter((x) => x.outcome === 'completed').length : 0;
+  return n > 1 ? `<span class="repeat">×${n}</span>` : '';
+}
+
 function renderCalendar() {
   const now = Date.now();
   const today = E.dateKey(now);
@@ -135,20 +149,18 @@ function renderCalendar() {
         body = '<span class="counts"><span class="none">skipped</span></span>';
         dot = '<span class="dot hard"></span>';
       } else {
-        const r = E.dayRating(day);
         cls = `past ${day.status}`;
         body = countsHTML(day.level);
-        dot = `<span class="dot ${r ?? 'none'}"></span>`;
-        if (day.sessions.filter((x) => x.outcome === 'completed').length > 1) repeat = '<span class="repeat">×' + day.sessions.filter((x) => x.outcome === 'completed').length + '</span>';
+        dot = ratingDots(day, 'none');
+        repeat = repeatBadge(day);
       }
     } else if (i === 0) {
       const day = state.days[date];
       const plan = todayPlan();
       cls = `today ${day?.status ?? ''}`;
       body = day?.status === 'skipped' ? '<span class="counts"><span class="none">skipped</span></span>' : countsHTML(plan.info);
-      const r = day ? E.dayRating(day) : null;
-      dot = `<span class="dot ${r ?? (day?.status === 'complete' ? 'none' : 'pending')}"></span>`;
-      if (day && day.sessions.filter((x) => x.outcome === 'completed').length > 1) repeat = '<span class="repeat">×' + day.sessions.filter((x) => x.outcome === 'completed').length + '</span>';
+      dot = day?.status === 'skipped' ? '<span class="dot hard"></span>' : ratingDots(day, 'pending');
+      repeat = repeatBadge(day);
     } else {
       const p = proj[i - 1];
       if (p.scheduled) {
@@ -385,9 +397,10 @@ function renderSheet() {
     if (day.sessions.length === 0 && !activeHere) html += '<div class="empty-note">No sessions recorded.</div>';
     html += '<div class="edit"><div class="edit-title">Corrections</div>';
     day.sessions.forEach((sess, i) => {
-      if (sess.outcome !== 'completed') return;
-      html += `<div class="edit-row"><span>Session ${i + 1} rating</span><select data-rate-session="${i}">${ratingOpts(sess.rating)}</select></div>`;
+      const rate = sess.outcome === 'completed' ? `<select data-rate-session="${i}">${ratingOpts(sess.rating)}</select>` : '<span class="meta">abandoned</span>';
+      html += `<div class="edit-row"><span>Session ${i + 1}</span><span class="grow"></span>${rate}<button class="icon-btn del" data-act="remove-session" data-i="${i}" ${activeHere ? 'disabled' : ''} aria-label="Remove session ${i + 1}">✕</button></div>`;
     });
+    html += `<div class="edit-row"><span>Add a session</span><span class="grow"></span><select data-add-session-rating>${ratingOpts(sheet.addRating ?? 'medium')}</select><button class="btn small" data-act="add-session" ${activeHere ? 'disabled' : ''}>Add</button></div>`;
     html += `<div class="edit-row"><span>Move to date</span><input type="date" id="move-date" value="${date}" ${activeHere ? 'disabled' : ''}><button class="btn small" data-act="move-day" ${activeHere ? 'disabled' : ''}>Move</button></div>`;
     html += `<div class="edit-row"><span class="grow"></span><button class="btn small danger" data-act="delete-day" ${activeHere ? 'disabled' : ''}>Delete this day</button></div>`;
     html += `<div class="edit-note">${activeHere ? 'Finish or reset the session before moving or deleting today. ' : ''}Corrections never change your current level; adjust that in Settings if needed.</div></div>`;
@@ -455,7 +468,7 @@ function renderHistory() {
         `<button class="day-card" data-date="${d.date}">` +
         `<div><div class="d1">${DOW[dt.getDay()]}</div><div class="d2">${dt.getDate()}</div><div class="d1">${MONTHS[dt.getMonth()]}</div></div>` +
         `<div><div class="lvl">${esc(E.levelLabel(d.level))}</div><div class="meta">${plural(d.sessions.length, 'session')}${done > 1 ? ` · repeated ×${done - 1}` : ''}${d.advanced ? ' · advanced ↑' : ''}${d.frozen ? ' · frozen' : ''}</div></div>` +
-        `<div class="st ${d.status}"><span class="rating-dot ${r ?? ''}"></span>${r ?? st}</div></button>`
+        `<div class="st ${d.status}">${done > 0 ? d.sessions.filter((x) => x.outcome === 'completed').map((x) => `<span class="rating-dot ${x.rating ?? ''}"></span>`).join('') : `<span class="rating-dot ${d.status === 'skipped' ? 'hard' : ''}"></span>`}${done > 1 ? `×${done}` : (r ?? st)}</div></button>`
       );
     })
     .join('');
@@ -517,7 +530,7 @@ function renderSettings() {
     <div class="group">
       <div class="field"><label>Desktop notifications <span class="hint">${notifier.supported() ? (Notification.permission === 'granted' ? 'Enabled' : Notification.permission === 'denied' ? 'Blocked in browser settings' : 'Shown when the app is in the background') : 'Not supported here'}</span></label>
         <button class="btn small" data-act="notify" ${!notifier.supported() || Notification.permission !== 'default' ? 'disabled' : ''}>Enable</button></div>
-      <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 40}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 40}" aria-label="Chime volume"></div>
+      <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 30}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 30}" aria-label="Chime volume"></div>
       <div class="field"><label>Test chime</label><button class="btn small" data-act="test-sound">Play</button></div>
       <div class="field" ${'audioSession' in navigator ? '' : 'hidden'}><label>On iPhone <span class="hint">${{ always: 'Plays even on silent. Pauses music in other apps.', solo: 'Pauses music for the chime, then lets it resume.' }[s.audioMode] || 'Plays over music, asking it to duck.'}</span></label>
         <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' && s.audioMode !== 'solo' ? 'selected' : ''}>Mix with other audio</option><option value="solo" ${s.audioMode === 'solo' ? 'selected' : ''}>Pause music briefly</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
@@ -566,7 +579,7 @@ function render() {
   if ((!a || a.phase !== 'awaitingRating') && sheet?.kind === 'rating') sheet = null;
   renderSheet();
   alerts.setMode(state.settings.audioMode);
-  alerts.setVolume((state.settings.volume ?? 40) / 100);
+  alerts.setVolume((state.settings.volume ?? 30) / 100);
   if (!a || a.endsAt == null) alerts.cancelScheduled();
   if (a && (a.phase === 'working' || a.phase === 'resting')) wake.acquire();
   else wake.release();
@@ -602,7 +615,7 @@ function tick() {
       // render() clears any scheduled chime once no timer is running.
       const covered = alerts.consumeScheduled(a.endsAt);
       dispatch({ type: 'timerDone' });
-      alerts.setVolume((state.settings.volume ?? 40) / 100);
+      alerts.setVolume((state.settings.volume ?? 30) / 100);
       if (!covered) alerts.ring(kind);
       notifier.notify('Tracker', wasWork ? `Count ${countBefore + 1} done` : 'Rest over');
       return;
@@ -699,6 +712,15 @@ $('sheet').addEventListener('click', (e) => {
     sheet = null;
     dispatch({ type: 'deleteDay', date });
     toast('Skip mark removed');
+  } else if (btn.dataset.act === 'remove-session') {
+    const i = Number(btn.dataset.i);
+    if (!confirm(`Remove session ${i + 1} from ${fmtDate(date)}?`)) return;
+    dispatch({ type: 'removeSession', date, index: i });
+    toast('Session removed');
+  } else if (btn.dataset.act === 'add-session') {
+    const rating = $('sheet').querySelector('[data-add-session-rating]').value;
+    dispatch({ type: 'addSession', date, rating });
+    toast('Session added');
   } else if (btn.dataset.act === 'add-day') {
     const sel = (k) => $('sheet').querySelector(`[data-add=${k}]`).value;
     dispatch({ type: 'addDay', date, level: { stage: Number(sel('stage')), offset: Number(sel('offset')) }, rating: sel('rating') });
@@ -716,7 +738,7 @@ $('sheet').addEventListener('change', (e) => {
   if (t.dataset.add === 'date') { const today = E.dateKey(Date.now()); if (t.value && t.value <= today) { sheet.date = t.value; render(); } }
   else if (t.dataset.add === 'stage') { sheet.addStage = Number(t.value); sheet.addOffset = 0; render(); }
   else if (t.dataset.add === 'offset') { sheet.addOffset = Number(t.value); render(); }
-  else if (t.dataset.add === 'rating') { sheet.addRating = t.value; }
+  else if (t.dataset.add === 'rating' || t.hasAttribute('data-add-session-rating')) { sheet.addRating = t.value; }
 });
 $('sheet-backdrop').addEventListener('click', () => {
   if (sheet?.kind === 'rating') return;
