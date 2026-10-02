@@ -8,7 +8,7 @@ https://whocouldpossiblyguesswhy.github.io/tracker
 
 All of your data is stored locally in the browser. I cannot access it, nor do I care to. Export a JSON periodically; if site data is cleared you will lose it.
 
-Recommended on iOS: visit the link, tap Share, then choose "Add to Home Screen" for regular use
+Recommended on iOS: visit the link, tap Share, then choose "Add to Home Screen" for regular use. It works offline, too!
 
 ## Run it locally
 
