@@ -1,6 +1,11 @@
 # Tracker
 
-A small interval tracker, fully editable. Vibe coded to hell and back. 
+A small interval tracker, fully editable. Vibe coded to hell and back. Love you, Claude. 
+
+## Run it online
+
+whocouldpossiblyguesswhy.github.io/tracker 
+All of your data is stored locally in the browser. I cannot access it, nor do I care to. Export a JSON periodically; if site data is cleared you will lose it.
 
 ## Run it locally
 
