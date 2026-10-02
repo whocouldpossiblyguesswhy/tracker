@@ -3,21 +3,23 @@
 // Synthesized wind chime. Six aluminium tubes tuned to an A pentatonic scale
 // are struck in a gust: random order, random velocity, gusty timing. Each
 // strike has the inharmonic partials of a free tube (1 : 2.76 : 5.40), a fast
-// attack and a long ring, through a soft low-pass and a short synthetic
-// reverb. No audio files, nothing to license.
+// attack and a long ring, through a soft low-pass, a compressor and a short
+// synthetic reverb. No audio files, nothing to license.
 //
 // Two playback paths:
-//   1. Live Web Audio (preferred).
+//   1. Live Web Audio (preferred), scheduled on the audio clock so the chime
+//      lands exactly on the deadline.
 //   2. A pre-rendered copy of the same chime in an <audio> element, used when
 //      the live context is not running (iOS parks it as 'interrupted' or
-//      'suspended' after another app has had the audio session). Media
-//      elements are what iOS expects timers and alarms to use.
+//      'suspended' after another app has had the audio session).
+//
+// On iOS the chime mixes over other apps' audio. Ducking or pausing other
+// audio is not reliably available to web apps, so it is not attempted.
 export function createAlerts() {
   let ctx = null;
   let master = null;
   let input = null;
-  let mode = 'mix'; // 'mix' | 'always'
-  let volume = 0.55;
+  let volume = 0.35;
   let lastRing = null;
   const media = { work: null, rest: null, volume: null, rendering: false, unlocked: false };
 
@@ -28,19 +30,14 @@ export function createAlerts() {
     [5.4, 0.08, 0.5],
   ];
 
-  // Slider percent → master gain. Perceptual (squared) curve. The synth runs
-  // hot and a compressor keeps the top of the range clean; 100% is roughly
-  // double the previous edition's ceiling and the default of 30 sits slightly
-  // above its old default loudness. (Later raised again: strikes at 0.8.)
+  // Slider percent → master gain. Perceptual (squared) curve; the synth runs
+  // hot and a compressor keeps the top of the range clean.
   const gainFor = (v) => 1.0 * Math.pow(Math.min(1, Math.max(0, v)), 2);
 
-  // iOS 17+ Audio Session API. 'transient' plays over other audio (which ducks
-  // and then resumes) but obeys the ring/silent switch. 'playback' ignores the
-  // switch but pauses other apps' audio.
-  const SESSION_TYPES = { mix: 'transient', solo: 'transient-solo', always: 'playback' };
+  // iOS 17+ Audio Session API: 'transient' mixes with other audio.
   function applySession() {
     try {
-      if (navigator.audioSession) navigator.audioSession.type = SESSION_TYPES[mode] || 'transient';
+      if (navigator.audioSession) navigator.audioSession.type = 'transient';
     } catch {
       /* not supported */
     }
@@ -215,50 +212,10 @@ export function createAlerts() {
     media.unlocked = ok;
   }
 
-  // ------------------------------------------------------------ public
-
-  // In the modes that interrupt other audio, the chime plays only through the
-  // <audio> element: when the clip ends, WebKit ends its media session and iOS
-  // hands playback back to the other app. A live Web Audio engine would keep
-  // the session held, so it is closed in those modes.
-  const interrupting = () => mode !== 'mix';
-
-  function closeEngine() {
-    if (!ctx) return;
-    try { ctx.close().catch(() => {}); } catch { /* ignore */ }
-    ctx = null;
-    master = null;
-    input = null;
-  }
-
-  function setMode(m) {
-    const next = SESSION_TYPES[m] ? m : 'mix';
-    if (next !== mode) {
-      mode = next;
-      applySession();
-      if (interrupting()) closeEngine();
-    }
-  }
-
   // ------------------------------------------------------------ scheduling
   // Called when a timer is within a second of its deadline: warm the engine
   // and schedule the chime on the audio clock so it lands on the deadline.
   let scheduled = null;
-
-  // iOS gives audio back to other apps only when our audio session goes
-  // inactive, and WebKit keeps it active while the context is running. So in
-  // the modes that interrupt other audio, suspend the engine once the chime
-  // has rung out; the next schedule()/ring() wakes it again.
-  let releaseTimer = null;
-  function releaseLater(kind, delayMs) {
-    clearTimeout(releaseTimer);
-    if (mode === 'mix') return;
-    const tail = kind === 'work' ? 5500 : 4000;
-    releaseTimer = setTimeout(() => {
-      releaseTimer = null;
-      if (ctx && ctx.state === 'running' && !scheduled) ctx.suspend().catch(() => {});
-    }, Math.max(0, delayMs) + tail);
-  }
 
   function cancelScheduled() {
     if (!scheduled) return;
@@ -276,18 +233,6 @@ export function createAlerts() {
     const s = { endsAt, kind, nodes: [], timer: null, played: false };
     scheduled = s;
     if (volume <= 0) { s.played = true; return; }
-    if (interrupting()) {
-      // Clip only: it plays at the deadline and ends on its own, releasing
-      // the audio session so the other app resumes.
-      s.timer = setTimeout(() => {
-        if (scheduled === s && !s.played) {
-          s.played = true;
-          const ok = playMedia(kind);
-          lastRing = { at: endsAt, kind, path: ok ? 'media (scheduled)' : 'none', state: 'engine closed' };
-        }
-      }, Math.max(0, endsAt - Date.now()));
-      return;
-    }
     const arm = () => {
       if (scheduled !== s || s.played || !ctx || ctx.state !== 'running') return;
       s.played = true;
@@ -295,7 +240,6 @@ export function createAlerts() {
       master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
       chime(ctx, input, kind, at, s.nodes);
       lastRing = { at: endsAt, kind, path: 'web-audio (scheduled)', state: ctx.state };
-      releaseLater(kind, endsAt - Date.now());
     };
     if (ctx && ctx.state === 'running') arm();
     else if (ctx) ctx.resume().then(arm).catch(() => {});
@@ -337,14 +281,6 @@ export function createAlerts() {
     try {
       const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
       applySession();
-      clearTimeout(releaseTimer);
-      releaseTimer = null;
-      if (interrupting()) {
-        closeEngine();
-        if (media.volume == null) renderMedia().then(unlockMedia);
-        else unlockMedia();
-        return;
-      }
       if (AC && !ctx) {
         ctx = new AC();
         const g = buildGraph(ctx, gainFor(volume));
@@ -381,7 +317,6 @@ export function createAlerts() {
   function playLive(kind) {
     master.gain.setValueAtTime(gainFor(volume), ctx.currentTime);
     chime(ctx, input, kind, ctx.currentTime + 0.02);
-    releaseLater(kind, 0);
   }
 
   function ring(kind) {
@@ -394,11 +329,6 @@ export function createAlerts() {
       /* ignore */
     }
     if (volume <= 0) return info;
-    if (interrupting()) {
-      info.path = playMedia(kind) ? 'media' : 'none';
-      info.state = 'engine closed';
-      return info;
-    }
     if (ctx && ctx.state === 'running') {
       playLive(kind);
       info.path = 'web-audio';
@@ -437,19 +367,16 @@ export function createAlerts() {
       /* ignore */
     }
     return {
-      context: ctx ? ctx.state : interrupting() ? 'closed (clip mode)' : 'not created',
+      context: ctx ? ctx.state : 'not created',
       session,
       media: media.work && media.work.src ? (media.unlocked ? 'ready' : 'rendered') : 'none',
-      mode,
       lastRing,
     };
   }
 
-  // Coming back to the app with a chime pending: make sure the context is
-  // running again. (Without one pending, leave it alone so other apps' audio
-  // is not interrupted just by opening the app.)
+  // Coming back to the app: make sure the context is running again.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running' && (scheduled || mode === 'mix')) {
+    if (document.visibilityState === 'visible' && ctx && ctx.state !== 'running') {
       ctx.resume().catch(() => {});
     }
   });
@@ -458,7 +385,7 @@ export function createAlerts() {
   // the first tap then only has to unlock the element.
   renderMedia();
 
-  return { unlock, ring, setMode, setVolume, status, schedule, cancelScheduled, consumeScheduled };
+  return { unlock, ring, setVolume, status, schedule, cancelScheduled, consumeScheduled };
 }
 
 export function createWakeLock() {

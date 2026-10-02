@@ -482,7 +482,7 @@ function audioStatusText() {
   const last = st.lastRing
     ? `last chime ${new Date(st.lastRing.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })} via ${st.lastRing.path}`
     : 'no chime played yet';
-  return `engine ${st.context} · session ${st.session} · mode ${st.mode} · fallback ${st.media} · ${last}`;
+  return `engine ${st.context} · session ${st.session} · fallback ${st.media} · ${last}`;
 }
 
 function renderSettings() {
@@ -541,8 +541,6 @@ function renderSettings() {
         <button class="btn small" data-act="notify" ${!notifier.supported() || Notification.permission !== 'default' ? 'disabled' : ''}>Enable</button></div>
       <div class="field"><label>Chime volume <span class="hint">${s.volume ?? 35}%</span></label><input type="range" min="0" max="100" step="5" name="volume" value="${s.volume ?? 35}" aria-label="Chime volume"></div>
       <div class="field"><label>Test chime</label><button class="btn small" data-act="test-sound">Play</button></div>
-      <div class="field" ${'audioSession' in navigator ? '' : 'hidden'}><label>On iPhone <span class="hint">${{ always: 'Plays even on silent. Pauses music in other apps.', solo: 'Pauses music for the chime, then lets it resume.' }[s.audioMode] || 'Plays over music, asking it to duck.'}</span></label>
-        <select name="audioMode"><option value="mix" ${s.audioMode !== 'always' && s.audioMode !== 'solo' ? 'selected' : ''}>Mix with other audio</option><option value="solo" ${s.audioMode === 'solo' ? 'selected' : ''}>Pause music briefly</option><option value="always" ${s.audioMode === 'always' ? 'selected' : ''}>Always play</option></select></div>
       <div class="field"><label>Audio status <span class="hint" id="audio-status">${audioStatusText()}</span></label></div>
     </div>
     <h2>Data</h2>
@@ -564,7 +562,6 @@ function readSettingsForm() {
     restDaysBetween: num('restDaysBetween'),
     frozen: form.querySelector('[name=frozen]').checked,
     volume: num('volume'),
-    audioMode: form.querySelector('[name=audioMode]').value,
     items: [...form.querySelectorAll('input[data-item]')].map((el) => el.value.trim()).filter(Boolean),
   };
 }
@@ -587,7 +584,6 @@ function render() {
   if (a && a.phase === 'awaitingRating' && (!sheet || sheet.kind !== 'rating')) sheet = { kind: 'rating' };
   if ((!a || a.phase !== 'awaitingRating') && sheet?.kind === 'rating') sheet = null;
   renderSheet();
-  alerts.setMode(state.settings.audioMode);
   alerts.setVolume((state.settings.volume ?? 35) / 100);
   if (!a || a.endsAt == null) alerts.cancelScheduled();
   if (a && (a.phase === 'working' || a.phase === 'resting')) wake.acquire();
