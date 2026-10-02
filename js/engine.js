@@ -162,12 +162,16 @@ function closeActive(state, outcome, now) {
     rating: a.rating,
     outcome,
   });
+  const wasComplete = day.status === 'complete';
   if (outcome === 'completed') {
-    if (a.rating === 'hard' && day.status !== 'complete') {
+    if (a.rating === 'hard' && !wasComplete) {
       day.status = 'needs-repeat';
     } else {
       day.status = 'complete';
-      if (!day.advanced) {
+      // Only the session that first completes the day can advance the level.
+      // An extra session on an already-complete day never does, even if the
+      // day's completion happened while frozen or at the final level.
+      if (!wasComplete && !day.advanced) {
         const info = levelInfo(state.settings, state.level);
         day.frozen = state.settings.frozen;
         day.advanced = !state.settings.frozen && !info.isFinal;
