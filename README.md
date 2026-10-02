@@ -8,6 +8,8 @@ https://whocouldpossiblyguesswhy.github.io/tracker
 
 All of your data is stored locally in the browser. I cannot access it, nor do I care to. Export a JSON periodically; if site data is cleared you will lose it.
 
+Recommended on iOS: visit the link, tap Share, then choose "Add to Home Screen" for regular use
+
 ## Run it locally
 
 Double-click **Start Tracker.bat**. It starts the local server in a minimized window and
